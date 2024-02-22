@@ -3,9 +3,66 @@
 #include <netdb.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define MSG_MAX_LEN 1024
-#define PORT 22110
+
+struct threadData{
+  int socket;
+  struct addrinfo *servinfo;
+};
+
+void *sendThread(void* data)
+{
+  struct threadData* sendData = (struct threadData*) data;
+
+  while(1){
+  char message[MSG_MAX_LEN];
+  // SEND MESSAGE
+ 
+  fgets(message, sizeof(message), stdin);
+
+  int send_len = sendto(sendData->socket, message, strlen(message), 0, sendData->servinfo->ai_addr, sendData->servinfo->ai_addrlen);
+  if (send_len == -1)
+  {
+    perror("sendto error");
+  }
+  else
+  {
+    printf("Sent %d bytes\n\n", send_len);
+  }
+
+}
+  return NULL;
+}
+
+void *receiveThread(void* data)
+{
+  struct threadData* receiveData = (struct threadData*) data;
+
+  // Receive data
+ struct sockaddr_storage servAddr;
+    while (1)
+  {
+  
+  char serverBuffer[MSG_MAX_LEN];
+  socklen_t servAddrLen = sizeof servAddr;
+
+  int recv_len = recvfrom(receiveData->socket, serverBuffer, sizeof(serverBuffer), 0, (struct sockaddr *)&servAddr, &servAddrLen);
+  if (recv_len == -1)
+  {
+    perror("recvfrom error");
+  }
+
+  serverBuffer[recv_len] = '\0'; // Null-terminate the received data
+
+  printf("Received message: %s\n", serverBuffer); // Receive data
+
+
+  }
+
+  return NULL;
+}
 
 int main(int argc, char *argv[])
 {
@@ -20,7 +77,7 @@ int main(int argc, char *argv[])
   // Set up Structure to hold address information
   struct addrinfo hints;
   struct addrinfo *servinfo;
-  struct sockaddr_storage servAddr;
+ 
   memset(&hints, 0, sizeof hints);
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_DGRAM;
@@ -84,38 +141,26 @@ int main(int argc, char *argv[])
     printf("Client Socket Creation fail\n");
   }
 
-  while (1)
-  {
+  /////////////////////////
+  // Send and Receive Data
+  ////////////////////////
+  pthread_t receiveThreadPID;
+  pthread_t sendThreadPID;
+  struct threadData threadSendData;
+  struct threadData threadReceiveData;
 
-    char message[MSG_MAX_LEN];
-    // SEND MESSAGE
-    printf("Enter a message:");
-    fgets(message, sizeof(message), stdin);
+  threadSendData.socket = clientSocket;
+  threadSendData.servinfo = servinfo2;
 
-    int send_len = sendto(clientSocket, message, strlen(message), 0, servinfo2->ai_addr, servinfo2->ai_addrlen);
-    if (send_len == -1)
-    {
-      perror("sendto error");
-    }
-    else
-    {
-      printf("Sent %d bytes\n", send_len);
-    }
-
-    // Receive data
-    char serverBuffer[MSG_MAX_LEN];
-    socklen_t servAddrLen = sizeof servAddr;
-
-    int recv_len = recvfrom(serverSocket, serverBuffer, sizeof(serverBuffer), 0, (struct sockaddr *)&servAddr, &servAddrLen);
-    if (recv_len == -1)
-    {
-      perror("recvfrom error");
-    }
-
-    serverBuffer[recv_len] = '\0'; // Null-terminate the received data
-
-    printf("Received message from the server: %s\n", serverBuffer);
-  }
+  threadReceiveData.socket = serverSocket;
+  threadReceiveData.servinfo = servinfo;
+   printf("\nStart Messaging:\n" );
+  pthread_create(&sendThreadPID, NULL, sendThread, (void*)&threadSendData);
+  pthread_create(&receiveThreadPID, NULL, receiveThread, (void*)&threadReceiveData);
+  
+  pthread_join(sendThreadPID, NULL);
+  pthread_join(receiveThreadPID, NULL);
+ 
 
   close(clientSocket);
   freeaddrinfo(servinfo2);
