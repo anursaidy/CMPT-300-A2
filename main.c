@@ -18,14 +18,14 @@
 struct threadData{
   int socket;
   struct addrinfo *servinfo;
-  List** givenList;
+  List* givenList;
 };
 
 struct ListIo{
-  List** givenList;
+  List* givenList;
 };
 
-void *sendThread(void* data)
+void *getUserInputThread(void* data)
 {
     struct ListIo* sendData = (struct ListIo*) data;
 
@@ -34,7 +34,7 @@ void *sendThread(void* data)
       // SEND MESSAGE
     
       fgets(message, sizeof(message), stdin);
-      if(List_append(&sendData->givenList,message) == -1){
+      if(List_append(sendData->givenList,message) == -1){
         printf("Error adding message to outbound list\n");
       }
       else{
@@ -47,7 +47,7 @@ void *sendThread(void* data)
 
 void *receiveThread(void* data)
 {
-  struct ListIo* receiveData = (struct ListIo*) data;
+  struct threadData* receiveData = (struct threadData*) data;
 
   // Receive data
  struct sockaddr_storage servAddr;
@@ -66,7 +66,7 @@ void *receiveThread(void* data)
 
     // printf("Received message: %s\n", serverBuffer); // Receive data
 
-    int addStatus = List_append(&recieveData->givenList,serverBuffer);
+    int addStatus = List_append(receiveData->givenList,serverBuffer);
     if(addStatus == -1){
       printf("Message has not been recieved!\n");
     }
@@ -79,55 +79,53 @@ void *receiveThread(void* data)
   return NULL;
 }
 
-void* sendToClient(void* data){
-  struct threaddata* sendData = (struct threadData*) data;
+void* sendToThread(void* data){
+  struct threadData* sendData = (struct threadData*) data;
 
   while(1){
     char message[MSG_MAX_LEN];
+    if(List_count(sendData->givenList) == 0){
 
-    void* messageToSend = List_trim(&sendData->givenList);
-
-    if(messageToSend != NULL){
-      message = (char*) messageToSend;
-      int send_len = sendto(sendData->socket, message, strlen(message), 0, sendData->servinfo->ai_addr, sendData->servinfo->ai_addrlen);
-      if (send_len == -1)
-      {
-        perror("sendto error");
-      }
-      else
-      {
-        printf("Sent %d bytes\n\n", send_len);
-      }
     }
     else{
-      printf("No messages to send\n");
+      void* messageToSend = List_trim(sendData->givenList);
+
+      if(messageToSend != NULL){
+        strcpy(message,(char*) messageToSend);
+        int send_len = sendto(sendData->socket, message, strlen(message), 0, sendData->servinfo->ai_addr, sendData->servinfo->ai_addrlen);
+        if (send_len == -1)
+        {
+          perror("sendto error");
+        }
+        else
+        {
+          printf("Sent %d bytes\n\n", send_len);
+        }
+      }
     }
   }
+
+  return NULL;
   
 }
 
-void* displayMessage(void* data){
+void* outputMessageThread(void* data){
   //TODO
   struct ListIo* inBoundList = (struct ListIo*) data;
 
   while(1){
     char serverBuffer[MSG_MAX_LEN];
-    void* messageToDisplay = List_trim(&sendData->givenList);
-    if(messageToDisplay != NULL){
-      serverBuffer = (char*) messageToDisplay;
-      if (send_len == -1)
-      {
-        perror("sendto error");
-      }
-      else
-      {
-        printf("Message: %s\n\n", )serverBuffer;
-      }
+    if(List_count(inBoundList->givenList) == 0){
     }
     else{
-      printf("No messages recieved\n");
+      void* messageToDisplay = List_trim(inBoundList->givenList);
+      if(messageToDisplay != NULL){
+        strcpy(serverBuffer,(char*) messageToDisplay);
+        printf("Message: %s\n\n", serverBuffer);
+      }
     }
   }
+  return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -214,7 +212,9 @@ int main(int argc, char *argv[])
   pthread_t receiveThreadPID;
   pthread_t sendThreadPID;
   struct ListIo threadSendData;
-  struct ListIo threadReceiveData;
+  struct threadData threadReceiveData;
+  struct threadData threadSendToClient;
+  struct ListIo threadDisplayData;
 
   /*********List and respective threads************/
 
@@ -230,13 +230,24 @@ int main(int argc, char *argv[])
   List* inBoundList = List_create();
 
   /************************************************/
-  threadSendData.givenList = &outBoundList;
+  threadSendData.givenList = outBoundList;
 
-  threadReceiveData.givenList = &inBoundList;
+  threadReceiveData.servinfo = servinfo;
+  threadReceiveData.socket = serverSocket;
+  threadReceiveData.givenList = inBoundList;
+
+  threadSendToClient.servinfo = servinfo2;
+  threadSendToClient.socket = clientSocket;
+  threadSendToClient.givenList = outBoundList;
+
+  threadDisplayData.givenList = inBoundList;
 
   printf("\nStart Messaging:\n" );
-  pthread_create(&sendThreadPID, NULL, sendThread, (void*)&threadSendData);
+  pthread_create(&sendThreadPID, NULL, getUserInputThread, (void*)&threadSendData);
   pthread_create(&receiveThreadPID, NULL, receiveThread, (void*)&threadReceiveData);
+  pthread_create(&outboundThread, NULL, sendToThread,(void*)& threadSendToClient);
+  pthread_create(&inboundThread, NULL, outputMessageThread, (void*)& threadDisplayData);
+
   
   pthread_join(sendThreadPID, NULL);
   pthread_join(receiveThreadPID, NULL);
