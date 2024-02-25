@@ -1,2 +1,2 @@
 all:
-	gcc main.c -o output
+	gcc list.o main.c -o s-talk 
