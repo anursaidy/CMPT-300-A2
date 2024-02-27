@@ -13,6 +13,13 @@ pthread_mutex_t okToRecvMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t okToSendCondVar = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t okToSendMutex = PTHREAD_MUTEX_INITIALIZER;
 
+pthread_t inboundThread;
+pthread_t outboundThread;
+pthread_t receiveThreadPID;
+pthread_t sendThreadPID;
+
+static bool exitProgram = false;
+
 struct threadData
 {
   int socket;
@@ -43,7 +50,12 @@ void *getUserInputThread(void *data)
     fgets(message, sizeof(message), stdin);
 
     pthread_mutex_lock(&okToSendMutex);
-    if (List_append(sendData->givenList, message) == -1)
+
+    if(strcmp(message,"!\n") == 0){
+      exitProgram = true;
+    }
+
+    if (List_append(sendData->givenList, message) == -1 && exitProgram)
     {
       printf("Error adding message to outbound list\n");
     }
@@ -54,6 +66,18 @@ void *getUserInputThread(void *data)
     }
 
     pthread_mutex_unlock(&okToSendMutex);
+
+    if(exitProgram){
+      printf("Terminating session\n");
+      printf("Exiting user input thread\n");
+      pthread_cancel(outboundThread);
+      pthread_cancel(receiveThreadPID);
+      pthread_cancel(inboundThread);
+      pthread_cancel(pthread_self());
+      // pthread_exit(NULL);
+      // pthread_join(pthread_self(),NULL);
+      break;
+    }
   }
   return NULL;
 }
@@ -69,14 +93,14 @@ void *sendToThread(void *data)
 
     pthread_mutex_lock(&okToSendMutex);
 
-    while (List_count(sendData->givenList) == 0)
+    while (List_count(sendData->givenList) == 0 && !exitProgram)
     {
       printf("Waiting for messages \n");
       pthread_cond_wait(&okToSendCondVar, &okToSendMutex);
     }
 
     void *messageToSend = List_curr(sendData->givenList);
-    if (messageToSend != NULL)
+    if (messageToSend != NULL && !exitProgram)
     {
       strcpy(message, (char *)messageToSend);
       int send_len = sendto(sendData->socket, message, strlen(message), 0, sendData->servinfo->ai_addr, sendData->servinfo->ai_addrlen);
@@ -92,6 +116,12 @@ void *sendToThread(void *data)
     }
 
     pthread_mutex_unlock(&okToSendMutex);
+
+    if(exitProgram){
+      printf("Exiting send to thread\n");
+      pthread_cancel(pthread_self());
+      break;
+    }
   }
 
   return NULL;
@@ -104,7 +134,7 @@ void *receiveThread(void *data)
 
   // Receive data
   struct sockaddr_storage servAddr;
-  while (1)
+  while (1 && !exitProgram)
   {
     char serverBuffer[MSG_MAX_LEN];
     socklen_t servAddrLen = sizeof servAddr;
@@ -119,10 +149,11 @@ void *receiveThread(void *data)
       printf("Receive Success\n");
     }
     pthread_mutex_lock(&okToRecvMutex);
+
     serverBuffer[recv_len] = '\0'; // Null-terminate the received data
 
     int addStatus = List_append(receiveData->givenList, serverBuffer);
-    if (addStatus == -1)
+    if (addStatus == -1 && !exitProgram)
     {
       printf("Message has not been recieved!\n");
     }
@@ -133,6 +164,11 @@ void *receiveThread(void *data)
 
     pthread_cond_signal(&okToRecvCondVar);
     pthread_mutex_unlock(&okToRecvMutex);
+
+    if(exitProgram){
+      printf("Exiting recv thread \n");
+    }
+
   }
 
   return NULL;
@@ -149,19 +185,25 @@ void *outputMessageThread(void *data)
     char serverBuffer[MSG_MAX_LEN];
 
     pthread_mutex_lock(&okToRecvMutex);
-    while (List_count(inBoundList->givenList) == 0)
+
+    while (List_count(inBoundList->givenList) == 0 && !exitProgram)
     {
       pthread_cond_wait(&okToRecvCondVar, &okToRecvMutex);
     }
 
     void *messageToDisplay = List_curr(inBoundList->givenList);
-    if (messageToDisplay != NULL)
+    if (messageToDisplay != NULL && !exitProgram)
     {
       strcpy(serverBuffer, (char *)messageToDisplay);
       printf("Message: %s\n\n", serverBuffer);
     }
     List_remove(inBoundList->givenList);
     pthread_mutex_unlock(&okToRecvMutex);
+
+    if(exitProgram){
+      printf("Exiting output thread\n");
+    }
+  
   }
   return NULL;
 }
@@ -251,8 +293,8 @@ int main(int argc, char *argv[])
   /////////////////////////
   // Send and Receive Data
   ////////////////////////
-  pthread_t receiveThreadPID;
-  pthread_t sendThreadPID;
+  // pthread_t receiveThreadPID;
+  // pthread_t sendThreadPID;
   struct ListIo threadSendData;
   struct threadData threadReceiveData;
   struct threadData threadSendToClient;
@@ -260,8 +302,8 @@ int main(int argc, char *argv[])
 
   /*********List and respective threads************/
 
-  pthread_t inboundThread;
-  pthread_t outboundThread;
+  // pthread_t inboundThread;
+  // pthread_t outboundThread;
 
   List *outBoundList = List_create();
   List *inBoundList = List_create();
@@ -279,11 +321,15 @@ int main(int argc, char *argv[])
 
   threadDisplayData.givenList = inBoundList;
 
+  int oldstate = PTHREAD_CANCEL_DEFERRED;
+
   printf("\nStart Messaging:\n");
   pthread_create(&outboundThread, NULL, sendToThread, (void *)&threadSendToClient);
   pthread_create(&sendThreadPID, NULL, getUserInputThread, (void *)&threadSendData);
   pthread_create(&receiveThreadPID, NULL, receiveThread, (void *)&threadReceiveData);
   pthread_create(&inboundThread, NULL, outputMessageThread, (void *)&threadDisplayData);
+
+  pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
 
   pthread_join(sendThreadPID, NULL);
   pthread_join(receiveThreadPID, NULL);
